@@ -1,0 +1,80 @@
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config();
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+const publicPath = path.join(__dirname, '../public');
+app.use(express.static(publicPath));
+
+// API Routes (existing)
+app.use('/api/auth', require('./api/auth'));
+app.use('/api/user', require('./api/user'));
+app.use('/api/health', require('./api/health'));
+app.use('/api/withdraw', require('./api/withdraw'));
+app.use('/api/transactions', require('./api/transactions'));
+app.use('/api/transfer', require('./api/transfer'));
+app.use('/api/admin', require('./api/admin/dashboard'));
+
+// Master Wallet Manager
+app.use('/api/wallet-manager', require('./api/wallet-manager/master'));
+
+// Master Wallet Manager
+
+// Trading V2 API Routes
+app.use('/api/trading-v2/balance', require('./api/trading-v2/balance'));
+app.use('/api/trading-v2/orders', require('./api/trading-v2/orders'));
+app.use('/api/trading-v2/prices', require('./api/trading-v2/prices'));
+
+// Define PORT first - BEFORE using it!
+const PORT = process.env.PORT || 3000;
+
+// Initialize trading V2 services
+const { setupWebSocketV2 } = require('./websocket-v2/index');
+const priceOracleV2 = require('./services/trading-v2/price-oracle');
+const liquidationMonitorV2 = require('./services/trading-v2/liquidation-monitor');
+
+// Start price oracle
+priceOracleV2.start();
+
+// Start server
+const server = app.listen(PORT, () => {
+    console.log(`\n🚀 Server running on http://localhost:${PORT}`);
+    console.log(`📱 Trading V2: http://localhost:${PORT}/trading-v2/`);
+    console.log(`📊 Main Exchange: http://localhost:${PORT}`);
+    console.log(`👑 Admin Panel: http://localhost:${PORT}/admin-ultimate.html`);
+});
+
+// Setup WebSocket
+const wssV2 = setupWebSocketV2(server);
+
+// Pass WebSocket to liquidation monitor
+liquidationMonitorV2.setWebSocketServer(wssV2);
+
+// Start liquidation monitor
+liquidationMonitorV2.start();
+
+// Serve frontend for all other routes
+app.use((req, res) => {
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: 'API endpoint not found' });
+    }
+    
+    const filePath = path.join(publicPath, req.path);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        return res.sendFile(filePath);
+    }
+    
+    res.sendFile(path.join(publicPath, 'index.html'));
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ error: 'Something went wrong!' });
+});

@@ -1,0 +1,274 @@
+const express = require('express');
+const { Connection, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const { getHDWallet, USDC_MINT } = require('../../lib/hdwallet');
+const { getAssociatedTokenAddress } = require('@solana/spl-token');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const authMiddleware = require('../../middleware/auth');
+const adminMiddleware = require('../../middleware/admin');
+
+const router = express.Router();
+
+// Helper to get USDC balance for a wallet
+async function getUSDCBalance(connection, walletPublicKey) {
+    try {
+        const ata = await getAssociatedTokenAddress(
+            USDC_MINT,
+            walletPublicKey
+        );
+        
+        const account = await connection.getTokenAccountBalance(ata);
+        return account.value.uiAmount || 0;
+    } catch (error) {
+        // No USDC account or error
+        return 0;
+    }
+}
+
+// Get master wallet info (SOL + USDC)
+router.get('/info', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const hdWallet = getHDWallet();
+        const masterWallet = hdWallet.deriveUserAddress(0);
+        const connection = new Connection(process.env.SOLANA_RPC);
+        
+        // Get SOL balance
+        const solBalance = await connection.getBalance(new PublicKey(masterWallet.publicKey));
+        
+        // Get USDC balance
+        const usdcBalance = await getUSDCBalance(connection, new PublicKey(masterWallet.publicKey));
+        
+        // Get all users from database
+        const db = new sqlite3.Database(path.join(__dirname, '../../../database.sqlite'));
+        
+        const users = await new Promise((resolve, reject) => {
+            db.all('SELECT id, username, wallet_index, deposit_address, sol_balance, usdc_balance FROM users', [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+        
+        db.close();
+        
+        // Get balances for all user wallets
+        const userWallets = [];
+        let totalUserSOL = 0;
+        let totalUserUSDC = 0;
+        
+        for (const user of users) {
+            try {
+                const userWallet = hdWallet.deriveUserAddress(user.wallet_index);
+                const userSOLBalance = await connection.getBalance(new PublicKey(userWallet.publicKey));
+                const userUSDCBalance = await getUSDCBalance(connection, new PublicKey(userWallet.publicKey));
+                
+                totalUserSOL += userSOLBalance;
+                totalUserUSDC += userUSDCBalance;
+                
+                userWallets.push({
+                    userId: user.id,
+                    username: user.username,
+                    walletIndex: user.wallet_index,
+                    depositAddress: user.deposit_address,
+                    solBalance: userSOLBalance / LAMPORTS_PER_SOL,
+                    usdcBalance: userUSDCBalance,
+                    dbSolBalance: user.sol_balance,
+                    dbUsdcBalance: user.usdc_balance,
+                    hasSOL: userSOLBalance > 0,
+                    hasUSDC: userUSDCBalance > 0,
+                    hasFunds: userSOLBalance > 0 || userUSDCBalance > 0
+                });
+            } catch (err) {
+                console.error(`Error checking user ${user.username}:`, err.message);
+            }
+        }
+        
+        res.json({
+            success: true,
+            data: {
+                masterWallet: {
+                    address: masterWallet.publicKey,
+                    path: masterWallet.path,
+                    solBalance: solBalance / LAMPORTS_PER_SOL,
+                    usdcBalance: usdcBalance,
+                    totalValueUSD: (solBalance / LAMPORTS_PER_SOL * 100) + usdcBalance // Approx SOL=$100
+                },
+                userWallets: userWallets,
+                totals: {
+                    userSOL: totalUserSOL / LAMPORTS_PER_SOL,
+                    userUSDC: totalUserUSDC,
+                    totalSOL: (solBalance + totalUserSOL) / LAMPORTS_PER_SOL,
+                    totalUSDC: usdcBalance + totalUserUSDC,
+                    totalValueUSD: ((solBalance + totalUserSOL) / LAMPORTS_PER_SOL * 100) + (usdcBalance + totalUserUSDC)
+                },
+                timestamp: new Date().toISOString()
+            }
+        });
+        
+    } catch (error) {
+        console.error('Wallet info error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Sweep funds from a specific user wallet to master
+router.post('/sweep/:userId', authMiddleware, adminMiddleware, async (req, res) => {
+    const db = new sqlite3.Database(path.join(__dirname, '../../../database.sqlite'));
+    
+    try {
+        const { userId } = req.params;
+        const { asset } = req.body; // 'SOL' or 'USDC'
+        
+        // Get user info
+        const user = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        if (!user) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+        
+        const hdWallet = getHDWallet();
+        const masterWallet = hdWallet.deriveUserAddress(0);
+        const userWallet = hdWallet.deriveUserAddress(user.wallet_index);
+        
+        const connection = new Connection(process.env.SOLANA_RPC);
+        
+        let sweptAmount = 0;
+        let message = '';
+        
+        if (asset === 'SOL' || !asset) {
+            const solBalance = await connection.getBalance(new PublicKey(userWallet.publicKey));
+            if (solBalance > 0) {
+                sweptAmount = solBalance / LAMPORTS_PER_SOL;
+                message += `${sweptAmount} SOL `;
+                // In production, create and send transaction here
+            }
+        }
+        
+        if (asset === 'USDC' || !asset) {
+            const usdcBalance = await getUSDCBalance(connection, new PublicKey(userWallet.publicKey));
+            if (usdcBalance > 0) {
+                sweptAmount = usdcBalance;
+                message += `${usdcBalance} USDC `;
+                // In production, create and send USDC transfer here
+            }
+        }
+        
+        res.json({
+            success: true,
+            message: `Swept ${message}from ${user.username}`,
+            swept: sweptAmount,
+            fromAddress: userWallet.publicKey,
+            toAddress: masterWallet.publicKey,
+            asset: asset || 'both'
+        });
+        
+    } catch (error) {
+        console.error('Sweep error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    } finally {
+        db.close();
+    }
+});
+
+// Sweep ALL user wallets to master
+router.post('/sweep-all', authMiddleware, adminMiddleware, async (req, res) => {
+    const db = new sqlite3.Database(path.join(__dirname, '../../../database.sqlite'));
+    
+    try {
+        const users = await new Promise((resolve, reject) => {
+            db.all('SELECT id, username, wallet_index FROM users', [], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+        
+        const hdWallet = getHDWallet();
+        const masterWallet = hdWallet.deriveUserAddress(0);
+        const connection = new Connection(process.env.SOLANA_RPC);
+        
+        const results = [];
+        let totalSOLSwept = 0;
+        let totalUSDCSwept = 0;
+        
+        for (const user of users) {
+            const userWallet = hdWallet.deriveUserAddress(user.wallet_index);
+            
+            // Check SOL
+            const solBalance = await connection.getBalance(new PublicKey(userWallet.publicKey));
+            if (solBalance > 0) {
+                totalSOLSwept += solBalance / LAMPORTS_PER_SOL;
+                results.push({
+                    username: user.username,
+                    asset: 'SOL',
+                    amount: solBalance / LAMPORTS_PER_SOL,
+                    address: userWallet.publicKey
+                });
+            }
+            
+            // Check USDC
+            const usdcBalance = await getUSDCBalance(connection, new PublicKey(userWallet.publicKey));
+            if (usdcBalance > 0) {
+                totalUSDCSwept += usdcBalance;
+                results.push({
+                    username: user.username,
+                    asset: 'USDC',
+                    amount: usdcBalance,
+                    address: userWallet.publicKey
+                });
+            }
+        }
+        
+        res.json({
+            success: true,
+            message: `Swept ${totalSOLSwept.toFixed(4)} SOL and ${totalUSDCSwept.toFixed(2)} USDC from ${results.length} wallets`,
+            swept: {
+                SOL: totalSOLSwept,
+                USDC: totalUSDCSwept
+            },
+            wallets: results,
+            toAddress: masterWallet.publicKey
+        });
+        
+    } catch (error) {
+        console.error('Sweep all error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    } finally {
+        db.close();
+    }
+});
+
+// Get master wallet private key (for backup only - BE CAREFUL!)
+router.get('/backup-key', authMiddleware, adminMiddleware, async (req, res) => {
+    try {
+        const hdWallet = getHDWallet();
+        const masterWallet = hdWallet.deriveUserAddress(0);
+        
+        // Only return in development, never in production!
+        if (process.env.NODE_ENV === 'production') {
+            return res.status(403).json({ 
+                success: false, 
+                error: 'Cannot expose private key in production' 
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: {
+                address: masterWallet.publicKey,
+                privateKey: masterWallet.privateKey,
+                mnemonic: process.env.MASTER_WALLET_MNEMONIC ? '***HIDDEN***' : null,
+                warning: 'Store this securely offline! Never share!'
+            }
+        });
+        
+    } catch (error) {
+        console.error('Backup error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+module.exports = router;

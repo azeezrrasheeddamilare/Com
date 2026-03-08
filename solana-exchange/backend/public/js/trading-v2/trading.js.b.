@@ -1,0 +1,414 @@
+// ============================================
+// TRADING V2 - Real-time prices, no defaults
+// ============================================
+
+// State
+let currentAsset = 'SOL/USDT';
+let currentVolume = 0.01;
+let currentBid = 0;
+let currentAsk = 0;
+let tradingBalance = 0;
+let mainUSDC = 0;
+let positions = [];
+let ws = null;
+let chart = null;
+let transferDirection = 'toTrading';
+
+const CONTRACTS = {
+    'BTC/USDT': 1,
+    'ETH/USDT': 20,
+    'ETC/USDT': 1000,
+    'SOL/USDT': 100
+};
+
+const TV_SYMBOLS = {
+    'BTC/USDT': 'BINANCE:BTCUSDT',
+    'ETH/USDT': 'BINANCE:ETHUSDT',
+    'ETC/USDT': 'BINANCE:ETCUSDT',
+    'SOL/USDT': 'BINANCE:SOLUSDT'
+};
+
+// ============================================
+// INITIALIZATION
+// ============================================
+document.addEventListener('DOMContentLoaded', async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        window.location.href = '/';
+        return;
+    }
+
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        document.getElementById('userName').textContent = payload.username || 'User';
+        document.getElementById('userAvatar').textContent = 
+            (payload.username || 'U')[0].toUpperCase();
+    } catch (e) {}
+
+    initChart('SOL/USDT');
+    await loadBalances();
+    await loadPositions();
+    await fetchPrices();
+    connectWebSocket();
+    
+    // Update prices every 2 seconds as fallback
+    setInterval(fetchPrices, 2000);
+    setInterval(loadPositions, 2000);
+});
+
+// ============================================
+// WEBSOCKET
+// ============================================
+function connectWebSocket() {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    ws = new WebSocket(`ws://${window.location.host}/ws-v2?token=${token}`);
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'PRICE_UPDATE') {
+            updatePrices(data.data);
+        }
+    };
+
+    ws.onclose = () => {
+        setTimeout(connectWebSocket, 3000);
+    };
+}
+
+// ============================================
+// CHART
+// ============================================
+function initChart(asset) {
+    const container = document.getElementById('tradingview_chart');
+    container.innerHTML = '';
+    
+    chart = new TradingView.widget({
+        container_id: 'tradingview_chart',
+        width: '100%',
+        height: '100%',
+        symbol: TV_SYMBOLS[asset],
+        interval: '1',
+        timezone: 'exchange',
+        theme: 'dark',
+        style: '1',
+        locale: 'en',
+        toolbar_bg: '#f1f3f6',
+        enable_publishing: false,
+        allow_symbol_change: false,
+        save_image: false,
+        studies: ['RSI@tv-basicstudies']
+    });
+}
+
+function switchAsset(asset) {
+    currentAsset = asset;
+    document.querySelectorAll('.asset-tab').forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.textContent === asset.split('/')[0]) tab.classList.add('active');
+    });
+    initChart(asset);
+    fetchPrices();
+}
+
+// ============================================
+// PRICES - Updates buttons in real-time
+// ============================================
+async function fetchPrices() {
+    try {
+        const response = await fetch(`/api/trading-v2/prices/${currentAsset}`, {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        const data = await response.json();
+        if (data.success) {
+            updatePrices({ [currentAsset]: data.data });
+        }
+    } catch (error) {
+        console.error('Price fetch error:', error);
+    }
+}
+
+function updatePrices(prices) {
+    if (prices[currentAsset]) {
+        const priceData = prices[currentAsset];
+        currentBid = priceData.bid || 0;
+        currentAsk = priceData.ask || 0;
+        
+        // Update buttons with real prices (3 decimal places for crypto)
+        document.getElementById('sellBtn').innerHTML = 'Sell $' + currentBid.toFixed(3);
+        document.getElementById('buyBtn').innerHTML = 'Buy $' + currentAsk.toFixed(3);
+        
+        const spread = (currentAsk - currentBid).toFixed(3);
+        document.getElementById('spread').textContent = spread;
+        
+        console.log('Prices updated - Sell:', currentBid, 'Buy:', currentAsk);
+        calculateOrder();
+    }
+}
+
+// ============================================
+// BALANCE
+// ============================================
+async function loadBalances() {
+    try {
+        const response = await fetch('/api/trading-v2/balance', {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            tradingBalance = data.data.tradingUSDC || 0;
+            mainUSDC = data.data.mainUSDC || 0;
+            
+            document.getElementById('tradingBalance').textContent = '$' + tradingBalance.toFixed(2);
+            document.getElementById('mainUSDC').textContent = '$' + mainUSDC.toFixed(2);
+            document.getElementById('modalAvailable').textContent = '$' + mainUSDC.toFixed(2);
+        }
+    } catch (error) {
+        console.error('Balance error:', error);
+    }
+}
+
+// ============================================
+// TRANSFER
+// ============================================
+function showTransferModal(direction) {
+    transferDirection = direction;
+    const title = direction === 'toTrading' ? 'Transfer to Trading' : 'Transfer to Main';
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('transferModal').classList.add('active');
+}
+
+function closeTransferModal() {
+    document.getElementById('transferModal').classList.remove('active');
+    document.getElementById('transferAmount').value = '';
+}
+
+async function confirmTransfer() {
+    const amount = parseFloat(document.getElementById('transferAmount').value);
+    
+    if (!amount || amount <= 0) {
+        showNotification('error', 'Invalid amount');
+        return;
+    }
+    
+    const endpoint = transferDirection === 'toTrading' 
+        ? '/api/trading-v2/balance/to-trading' 
+        : '/api/trading-v2/balance/to-main';
+    
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ amount })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('success', data.message);
+            closeTransferModal();
+            await loadBalances();
+        } else {
+            showNotification('error', data.error);
+        }
+    } catch (error) {
+        showNotification('error', 'Transfer failed');
+    }
+}
+
+// ============================================
+// VOLUME & ORDER - Uses real prices for calculation
+// ============================================
+function setVolume(vol) {
+    currentVolume = vol;
+    document.querySelectorAll('.volume-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (parseFloat(btn.textContent) === vol) btn.classList.add('active');
+    });
+    calculateOrder();
+}
+
+function calculateOrder() {
+    if (currentBid > 0 && currentAsk > 0) {
+        const price = (currentBid + currentAsk) / 2;
+        const contractSize = CONTRACTS[currentAsset] || 1;
+        const positionValue = currentVolume * contractSize * price;
+        const margin = positionValue / 100;
+        const fee = currentVolume * 15;
+        const total = margin + fee;
+        
+        document.getElementById('margin').textContent = '$' + margin.toFixed(2);
+        document.getElementById('fee').textContent = '$' + fee.toFixed(2);
+        document.getElementById('total').textContent = '$' + total.toFixed(2);
+        
+        console.log('Order calculated:', {price, margin, fee, total});
+    } else {
+        // Show only fee until prices arrive
+        document.getElementById('fee').textContent = '$' + (currentVolume * 15).toFixed(2);
+    }
+}
+
+// ============================================
+// ORDER PLACEMENT
+// ============================================
+async function placeOrder(side) {
+    const total = parseFloat(document.getElementById('total').textContent.replace('$', ''));
+    
+    if (tradingBalance < total) {
+        showNotification('error', 'Insufficient balance');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/trading-v2/orders/open', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({
+                asset: currentAsset,
+                volume: currentVolume,
+                side
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('success', data.message);
+            await loadBalances();
+            await loadPositions();
+        } else {
+            showNotification('error', data.error);
+        }
+    } catch (error) {
+        showNotification('error', 'Order failed');
+    }
+}
+
+// ============================================
+// POSITIONS
+// ============================================
+async function loadPositions() {
+    try {
+        const response = await fetch('/api/trading-v2/orders/positions', {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        });
+        const data = await response.json();
+        
+        if (data.success) {
+            positions = data.data || [];
+            renderPositions();
+        }
+    } catch (error) {
+        console.error('Positions error:', error);
+    }
+}
+
+function renderPositions() {
+    const container = document.getElementById('positionsList');
+    
+    if (positions.length === 0) {
+        container.innerHTML = '<div style="color: #8E8E93; text-align: center; padding: 40px;">No open positions</div>';
+        return;
+    }
+    
+    container.innerHTML = positions.map(pos => {
+        const pnl = pos.pnl || 0;
+        const pnlClass = pnl >= 0 ? 'profit' : 'loss';
+        const pnlSymbol = pnl >= 0 ? '+' : '-';
+        const currentPrice = pos.current_price || pos.entry_price;
+        
+        return `
+            <div class="position-card ${pnlClass}">
+                <div class="position-header">
+                    <span class="position-asset">${pos.asset}</span>
+                    <span class="position-side ${pos.side}">${pos.side}</span>
+                </div>
+                <div class="position-details">
+                    <div>Volume: ${pos.volume}</div>
+                    <div>Entry: $${pos.entry_price.toFixed(2)}</div>
+                    <div>Current: $${currentPrice.toFixed(2)}</div>
+                </div>
+                <div class="position-pnl ${pnlClass}">
+                    P&L: ${pnlSymbol}$${Math.abs(pnl).toFixed(2)}
+                </div>
+                <button class="close-btn" onclick="closePosition('${pos.id}')">Close</button>
+            </div>
+        `;
+    }).join('');
+}
+
+async function closePosition(positionId) {
+    if (!confirm('Close this position?')) return;
+    
+    try {
+        const response = await fetch('/api/trading-v2/orders/close', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ positionId })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('success', data.message);
+            await loadBalances();
+            await loadPositions();
+        } else {
+            showNotification('error', data.error);
+        }
+    } catch (error) {
+        showNotification('error', 'Close failed');
+    }
+}
+
+// ============================================
+// UI HELPERS
+// ============================================
+function toggleUserMenu() {
+    if (confirm('Logout?')) {
+        logout();
+    }
+}
+
+function showNotification(type, message) {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 3000);
+}
+
+function logout() {
+    if (ws) ws.close();
+    localStorage.removeItem('token');
+    window.location.href = '/';
+}
+
+// Make functions global
+window.switchAsset = switchAsset;
+window.setVolume = setVolume;
+window.placeOrder = placeOrder;
+window.closePosition = closePosition;
+window.showTransferModal = showTransferModal;
+window.closeTransferModal = closeTransferModal;
+window.confirmTransfer = confirmTransfer;
+window.toggleUserMenu = toggleUserMenu;
+window.logout = logout;

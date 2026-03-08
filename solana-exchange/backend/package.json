@@ -1,0 +1,30 @@
+{
+  "name": "solana-exchange",
+  "version": "1.0.0",
+  "description": "Solana Exchange",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon --config nodemon.json src/server.js",
+    "init-db": "sqlite3 database.sqlite < init.sql",
+    "seed": "node seed.js"
+  },
+  "dependencies": {
+    "@solana/spl-token": "*",
+    "@solana/web3.js": "*",
+    "bcryptjs": "*",
+    "bip39": "*",
+    "bs58": "*",
+    "cors": "*",
+    "dotenv": "*",
+    "ed25519-hd-key": "*",
+    "express": "*",
+    "jsonwebtoken": "*",
+    "node-fetch": "2",
+    "sqlite3": "*",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "*"
+  }
+}

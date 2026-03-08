@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CFD Trading - Solana Exchange</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        /* Trading-specific styles */
+        .trading-layout {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+            padding: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .chart-section {
+            background: #1A1C22;
+            border-radius: 12px;
+            padding: 15px;
+        }
+        
+        .order-section {
+            background: #1A1C22;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .asset-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            background: #2A2C33;
+            padding: 5px;
+            border-radius: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .asset-tab {
+            flex: 1;
+            min-width: 80px;
+            padding: 12px;
+            background: transparent;
+            border: none;
+            color: #8E8E93;
+            cursor: pointer;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        
+        .asset-tab.active {
+            background: #F0B90B;
+            color: black;
+            font-weight: bold;
+        }
+        
+        .balance-info {
+            background: #2A2C33;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .balance-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            color: #8E8E93;
+        }
+        
+        .balance-row .value {
+            color: white;
+            font-weight: bold;
+        }
+        
+        .transfer-btn {
+            width: 100%;
+            padding: 12px;
+            background: #F0B90B;
+            color: black;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        .price-display {
+            text-align: center;
+            margin: 20px 0;
+            padding: 20px;
+            background: #2A2C33;
+            border-radius: 8px;
+        }
+        
+        .current-price {
+            font-size: 48px;
+            font-weight: bold;
+            color: white;
+        }
+        
+        .price-change {
+            font-size: 18px;
+            margin-top: 5px;
+        }
+        
+        .price-change.positive { color: #16C784; }
+        .price-change.negative { color: #EA3943; }
+        
+        .spread-display {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            padding: 10px;
+            background: #1A1C22;
+            border-radius: 6px;
+        }
+        
+        .bid-box, .ask-box {
+            text-align: center;
+            flex: 1;
+        }
+        
+        .bid-label, .ask-label {
+            color: #8E8E93;
+            font-size: 12px;
+        }
+        
+        .bid-value {
+            color: #EA3943;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        
+        .ask-value {
+            color: #16C784;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        
+        .volume-selector {
+            margin: 20px 0;
+        }
+        
+        .volume-label {
+            color: #8E8E93;
+            margin-bottom: 10px;
+        }
+        
+        .volume-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .volume-btn {
+            flex: 1;
+            min-width: 60px;
+            padding: 12px;
+            background: #2A2C33;
+            border: none;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .volume-btn.active {
+            background: #F0B90B;
+            color: black;
+            font-weight: bold;
+        }
+        
+        .order-summary {
+            background: #2A2C33;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            color: #8E8E93;
+        }
+        
+        .summary-row.total {
+            border-top: 1px solid #40444F;
+            padding-top: 10px;
+            margin-top: 10px;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .trade-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .buy-btn {
+            flex: 1;
+            padding: 16px;
+            background: #16C784;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .sell-btn {
+            flex: 1;
+            padding: 16px;
+            background: #EA3943;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .positions-section {
+            margin-top: 30px;
+            background: #1A1C22;
+            border-radius: 12px;
+            padding: 20px;
+            max-width: 1400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .positions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .position-card {
+            background: #2A2C33;
+            padding: 15px;
+            border-radius: 8px;
+            position: relative;
+            transition: all 0.3s;
+        }
+        
+        .position-card.profit {
+            border-left: 4px solid #16C784;
+        }
+        
+        .position-card.loss {
+            border-left: 4px solid #EA3943;
+        }
+        
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .position-asset {
+            font-weight: bold;
+            color: white;
+        }
+        
+        .position-side {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .position-side.BUY {
+            background: #16C784;
+            color: white;
+        }
+        
+        .position-side.SELL {
+            background: #EA3943;
+            color: white;
+        }
+        
+        .position-details {
+            color: #8E8E93;
+            font-size: 14px;
+        }
+        
+        .position-details div {
+            margin-bottom: 5px;
+        }
+        
+        .position-pnl {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .position-pnl.profit { color: #16C784; }
+        .position-pnl.loss { color: #EA3943; }
+        
+        .close-btn {
+            width: 100%;
+            padding: 8px;
+            background: #F0B90B;
+            color: black;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #1A1C22;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 400px;
+            width: 90%;
+        }
+        
+        .modal-content h3 {
+            color: white;
+            margin-bottom: 20px;
+        }
+        
+        .modal-content input {
+            width: 100%;
+            padding: 12px;
+            background: #2A2C33;
+            border: 1px solid #40444F;
+            border-radius: 6px;
+            color: white;
+            margin: 10px 0;
+            font-size: 16px;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .modal-actions button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .modal-actions .confirm {
+            background: #F0B90B;
+            color: black;
+        }
+        
+        .modal-actions .cancel {
+            background: #40444F;
+            color: white;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            z-index: 1001;
+            animation: slideIn 0.3s;
+        }
+        
+        .notification.success {
+            background: #16C784;
+        }
+        
+        .notification.error {
+            background: #EA3943;
+        }
+        
+        .notification.info {
+            background: #F0B90B;
+            color: black;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @media (max-width: 768px) {
+            .trading-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <a href="/" class="logo">
+                <span class="logo-icon">◎</span>
+                <span class="logo-text">SolanaX</span>
+            </a>
+            
+            <nav class="nav-desktop">
+                <a href="/" class="nav-link">Exchange</a>
+                <a href="/trading.html" class="nav-link active">CFD Trading</a>
+                <a href="/admin-ultimate.html" class="nav-link">Admin</a>
+            </nav>
+            
+            <div class="user-menu" id="user-menu">
+                <div class="user-button" onclick="this.closest('.user-menu').classList.toggle('active')">
+                    <div class="user-avatar" id="userAvatar">U</div>
+                    <span class="user-name" id="userName">Loading...</span>
+                    <span class="dropdown-icon">▼</span>
+                </div>
+                
+                <div class="dropdown-menu">
+                    <div class="dropdown-item logout" onclick="logout()">
+                        <span>🚪</span> Logout
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Main Trading Layout -->
+    <div class="trading-layout">
+        <!-- LEFT: Chart -->
+        <div class="chart-section">
+            <div class="asset-tabs" id="assetTabs">
+                <button class="asset-tab" onclick="switchAsset('BTC/USDT')">BTC/USDT</button>
+                <button class="asset-tab" onclick="switchAsset('ETH/USDT')">ETH/USDT</button>
+                <button class="asset-tab" onclick="switchAsset('ETC/USDT')">ETC/USDT</button>
+                <button class="asset-tab active" onclick="switchAsset('SOL/USDT')">SOL/USDT</button>
+            </div>
+            
+            <!-- TradingView Chart -->
+            <div id="tradingview_chart" style="height: 500px;"></div>
+        </div>
+        
+        <!-- RIGHT: Trading Panel -->
+        <div class="order-section">
+            <h2>Trade</h2>
+            
+            <!-- Balance Info -->
+            <div class="balance-info">
+                <div class="balance-row">
+                    <span>Trading Balance:</span>
+                    <span class="value" id="tradingBalance">$0.00</span>
+                </div>
+                <div class="balance-row">
+                    <span>Main USDC:</span>
+                    <span class="value" id="mainUSDC">$0.00</span>
+                </div>
+                <button class="transfer-btn" onclick="showTransferModal()">Transfer to Trading</button>
+            </div>
+            
+            <!-- Price Display with Spread -->
+            <div class="price-display">
+                <div class="current-price" id="currentPrice">$0.00</div>
+                <div class="price-change positive" id="priceChange">+0.00%</div>
+                
+                <div class="spread-display">
+                    <div class="bid-box">
+                        <div class="bid-label">BID</div>
+                        <div class="bid-value" id="bidPrice">$0.00</div>
+                    </div>
+                    <div class="ask-box">
+                        <div class="ask-label">ASK</div>
+                        <div class="ask-value" id="askPrice">$0.00</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Volume Selector -->
+            <div class="volume-selector">
+                <div class="volume-label">Volume</div>
+                <div class="volume-buttons">
+                    <button class="volume-btn active" onclick="setVolume(0.01)">0.01</button>
+                    <button class="volume-btn" onclick="setVolume(0.05)">0.05</button>
+                    <button class="volume-btn" onclick="setVolume(0.1)">0.1</button>
+                    <button class="volume-btn" onclick="setVolume(0.5)">0.5</button>
+                    <button class="volume-btn" onclick="setVolume(1)">1</button>
+                    <button class="volume-btn" onclick="setVolume(2)">2</button>
+                    <button class="volume-btn" onclick="setVolume(5)">5</button>
+                </div>
+            </div>
+            
+            <!-- Order Summary -->
+            <div class="order-summary">
+                <div class="summary-row">
+                    <span>Margin (1:100)</span>
+                    <span id="margin">$0.00</span>
+                </div>
+                <div class="summary-row">
+                    <span>Fee ($15/vol)</span>
+                    <span id="fee">$0.00</span>
+                </div>
+                <div class="summary-row total">
+                    <span>Total Required</span>
+                    <span id="total">$0.00</span>
+                </div>
+            </div>
+            
+            <!-- Trade Buttons with Prices -->
+            <div class="trade-buttons">
+                <button class="buy-btn" id="buyBtn" onclick="placeOrder('BUY')">BUY $0.00</button>
+                <button class="sell-btn" id="sellBtn" onclick="placeOrder('SELL')">SELL $0.00</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Positions Section -->
+    <div class="positions-section">
+        <h2>Your Open Positions</h2>
+        <div id="positionsList" class="positions-grid">
+            <div style="color: #8E8E93; text-align: center; padding: 40px; grid-column: 1/-1;">
+                Loading positions...
+            </div>
+        </div>
+    </div>
+    
+    <!-- Transfer Modal -->
+    <div class="modal" id="transferModal">
+        <div class="modal-content">
+            <h3>Transfer to Trading Balance</h3>
+            <p style="color: #8E8E93;">Only USDC can be transferred</p>
+            <input type="number" id="transferAmount" placeholder="Amount USDC" step="0.01" min="1">
+            <p style="color: #8E8E93; margin-top: 10px;">
+                Available: <span id="modalAvailable">$0.00</span>
+            </p>
+            <div class="modal-actions">
+                <button class="confirm" onclick="confirmTransfer()">Transfer</button>
+                <button class="cancel" onclick="closeTransferModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- TradingView Library -->
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    
+    <!-- Our Scripts -->
+    <script src="/js/trading/trading.js"></script>
+    <script src="/js/trading/websocket-client.js"></script>
+</body>
+</html>

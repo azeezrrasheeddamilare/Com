@@ -1,0 +1,263 @@
+const express = require('express');
+const crypto = require('crypto');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const tradingAuth = require('../../middleware/trading/trading-auth');
+const priceOracle = require('../../services/trading/price-oracle');
+
+const router = express.Router();
+
+const CONTRACTS = {
+    'BTC/USDT': { size: 1 },
+    'ETH/USDT': { size: 20 },
+    'ETC/USDT': { size: 1000 },
+    'SOL/USDT': { size: 100 }
+};
+
+const LEVERAGE = 100;
+const FEE_PER_VOLUME = 15;
+
+function generateId() {
+    return crypto.randomUUID();
+}
+
+// Open position
+router.post('/open', tradingAuth, async (req, res) => {
+    const db = new sqlite3.Database(path.join(__dirname, '../../../database.sqlite'));
+    
+    try {
+        const { asset, volume, side } = req.body;
+        const userId = req.userId;
+        
+        console.log('Opening position:', { asset, volume, side, userId });
+        
+        if (!asset || !volume || !side) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Missing required fields' 
+            });
+        }
+        
+        // Get current price from oracle
+        const price = side === 'BUY' 
+            ? priceOracle.getPrice(asset, 'ask')
+            : priceOracle.getPrice(asset, 'bid');
+        
+        if (!price || price === 0) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Price not available' 
+            });
+        }
+        
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        
+        // Check trading balance
+        const tradingBalance = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT usdc_balance FROM trading_balances WHERE user_id = ?',
+                [userId],
+                (err, row) => resolve(row ? row.usdc_balance : 0)
+            );
+        });
+        
+        const positionValue = volume * CONTRACTS[asset].size * price;
+        const margin = positionValue / LEVERAGE;
+        const fee = volume * FEE_PER_VOLUME;
+        const total = margin + fee;
+        
+        if (tradingBalance < total) {
+            throw new Error(`Insufficient balance. Need $${total.toFixed(2)}`);
+        }
+        
+        // Deduct from trading balance
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE trading_balances SET usdc_balance = usdc_balance - ? WHERE user_id = ?',
+                [total, userId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+        
+        // Create position
+        const positionId = generateId();
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT INTO trading_positions 
+                 (id, user_id, asset, volume, side, entry_price, margin, fee, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')`,
+                [positionId, userId, asset, volume, side, price, margin, fee],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+        
+        await new Promise((resolve, reject) => {
+            db.run('COMMIT', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        
+        res.json({
+            success: true,
+            message: `Opened ${volume} ${asset} ${side} at $${price}`,
+            data: { positionId, entryPrice: price }
+        });
+        
+    } catch (error) {
+        await new Promise((resolve) => {
+            db.run('ROLLBACK', () => resolve());
+        });
+        console.error('Open position error:', error);
+        res.status(400).json({ success: false, error: error.message });
+    } finally {
+        db.close();
+    }
+});
+
+// Close position
+router.post('/close', tradingAuth, async (req, res) => {
+    const db = new sqlite3.Database(path.join(__dirname, '../../../database.sqlite'));
+    
+    try {
+        const { positionId } = req.body;
+        const userId = req.userId;
+        
+        if (!positionId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Missing position ID' 
+            });
+        }
+        
+        await new Promise((resolve, reject) => {
+            db.run('BEGIN TRANSACTION', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        
+        // Get position
+        const position = await new Promise((resolve, reject) => {
+            db.get(
+                'SELECT * FROM trading_positions WHERE id = ? AND user_id = ? AND status = "OPEN"',
+                [positionId, userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+        
+        if (!position) {
+            throw new Error('Position not found');
+        }
+        
+        // Get current price
+        const currentPrice = priceOracle.getPrice(position.asset, 'mid');
+        if (!currentPrice) {
+            throw new Error('Price not available');
+        }
+        
+        // Calculate P&L
+        let priceDiff = currentPrice - position.entry_price;
+        if (position.side === 'SELL') {
+            priceDiff = -priceDiff;
+        }
+        
+        const pnl = priceDiff * position.volume * CONTRACTS[position.asset].size;
+        const returnAmount = position.margin + pnl;
+        
+        // Return funds
+        await new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE trading_balances SET usdc_balance = usdc_balance + ? WHERE user_id = ?',
+                [returnAmount, userId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+        
+        // Update position
+        await new Promise((resolve, reject) => {
+            db.run(
+                `UPDATE trading_positions 
+                 SET status = 'CLOSED', 
+                     current_price = ?, 
+                     pnl = ?,
+                     closed_at = CURRENT_TIMESTAMP 
+                 WHERE id = ?`,
+                [currentPrice, pnl, positionId],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+        
+        await new Promise((resolve, reject) => {
+            db.run('COMMIT', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        
+        res.json({
+            success: true,
+            message: pnl >= 0 ? `Profit: $${pnl.toFixed(2)}` : `Loss: $${Math.abs(pnl).toFixed(2)}`
+        });
+        
+    } catch (error) {
+        await new Promise((resolve) => {
+            db.run('ROLLBACK', () => resolve());
+        });
+        console.error('Close position error:', error);
+        res.status(400).json({ success: false, error: error.message });
+    } finally {
+        db.close();
+    }
+});
+
+// Get positions
+router.get('/positions', tradingAuth, async (req, res) => {
+    const db = new sqlite3.Database(path.join(__dirname, '../../../database.sqlite'));
+    
+    try {
+        const positions = await new Promise((resolve, reject) => {
+            db.all(
+                'SELECT * FROM trading_positions WHERE user_id = ? AND status = "OPEN" ORDER BY created_at DESC',
+                [req.userId],
+                (err, rows) => resolve(rows || [])
+            );
+        });
+        
+        // Update with current prices
+        const positionsWithPrices = positions.map(pos => ({
+            ...pos,
+            current_price: priceOracle.getPrice(pos.asset, 'mid') || pos.entry_price
+        }));
+        
+        res.json({ success: true, data: positionsWithPrices });
+        
+    } catch (error) {
+        console.error('Fetch positions error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    } finally {
+        db.close();
+    }
+});
+
+module.exports = router;

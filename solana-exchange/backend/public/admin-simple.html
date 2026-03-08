@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Panel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 { color: #333; margin-top: 0; }
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+        }
+        .back-btn {
+            padding: 8px 16px;
+            background: #6366f1;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+        }
+        .logout-btn {
+            padding: 8px 16px;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f5f5f5;
+        }
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <div>
+                <a href="/" class="back-btn">← Back to Exchange</a>
+                <span style="font-size: 20px; font-weight: bold; margin-left: 20px;">👑 Admin Panel</span>
+            </div>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+        
+        <div id="content">
+            <div class="card">
+                <h2>Loading admin data...</h2>
+                <div style="text-align: center; padding: 40px;">
+                    <div class="spinner" style="border: 3px solid #f3f3f3; border-top: 3px solid #6366f1; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) {
+            window.location.href = '/';
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/';
+        }
+
+        async function loadData() {
+            const content = document.getElementById('content');
+            
+            try {
+                // Get users only (skip stats for now)
+                const usersRes = await fetch('/api/admin/users', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!usersRes.ok) {
+                    throw new Error(`Failed to load users: ${usersRes.status}`);
+                }
+                
+                const users = await usersRes.json();
+
+                // Get stats
+                const statsRes = await fetch('/api/admin/stats', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                let stats = { total_users: users.length, total_deposits: 0, total_withdrawals: 0, total_deposit_amount: 0 };
+                
+                if (statsRes.ok) {
+                    stats = await statsRes.json();
+                    stats = stats.stats || stats;
+                }
+
+                content.innerHTML = `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Users</div>
+                            <div class="stat-value">${stats.total_users || users.length}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Total Deposits</div>
+                            <div class="stat-value">${stats.total_deposits || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Total Withdrawals</div>
+                            <div class="stat-value">${stats.total_withdrawals || 0}</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Total Volume</div>
+                            <div class="stat-value">$${(stats.total_deposit_amount || 0).toFixed(2)}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <h2>User Management</h2>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Email</th>
+                                    <th>SOL</th>
+                                    <th>USDC</th>
+                                    <th>Admin</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${users.map(user => `
+                                    <tr>
+                                        <td>@${user.username}</td>
+                                        <td>${user.email}</td>
+                                        <td>${Number(user.sol_balance).toFixed(4)}</td>
+                                        <td>${Number(user.usdc_balance).toFixed(2)}</td>
+                                        <td>${user.is_admin ? '✅' : '❌'}</td>
+                                        <td>
+                                            <button class="btn btn-success" onclick="toggleAdmin('${user.id}', ${user.is_admin})">
+                                                ${user.is_admin ? 'Remove Admin' : 'Make Admin'}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+
+            } catch (error) {
+                console.error('Error:', error);
+                content.innerHTML = `
+                    <div class="card">
+                        <h2 style="color: red;">Error Loading Data</h2>
+                        <p>${error.message}</p>
+                        <button onclick="location.reload()" style="padding: 10px 20px; background: #6366f1; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                            Retry
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        async function toggleAdmin(userId, currentStatus) {
+            try {
+                const res = await fetch(`/api/admin/users/${userId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ is_admin: currentStatus ? 0 : 1 })
+                });
+                
+                if (res.ok) {
+                    loadData();
+                } else {
+                    alert('Failed to update admin status');
+                }
+            } catch (error) {
+                alert('Error updating admin status');
+            }
+        }
+
+        loadData();
+    </script>
+</body>
+</html>

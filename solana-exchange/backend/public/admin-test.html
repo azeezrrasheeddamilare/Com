@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: white;
+        }
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            color: #333;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        button {
+            padding: 10px 20px;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Admin Status Test</h1>
+        <div id="status">Checking...</div>
+        <div id="details"></div>
+        <div style="margin-top: 20px;">
+            <button onclick="goToAdmin()">Go to Admin Panel</button>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('token');
+        
+        async function checkStatus() {
+            const status = document.getElementById('status');
+            const details = document.getElementById('details');
+            
+            if (!token) {
+                status.innerHTML = '<span class="error">❌ Not logged in</span>';
+                details.innerHTML = '<a href="/">Go to login</a>';
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/auth/verify', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                
+                if (data.user) {
+                    const isAdmin = data.user.username === 'alice' || data.user.is_admin;
+                    status.innerHTML = isAdmin ? 
+                        '<span class="success">✅ You are an admin!</span>' : 
+                        '<span class="error">❌ You are not an admin</span>';
+                    
+                    details.innerHTML = `<pre>${JSON.stringify(data.user, null, 2)}</pre>`;
+                    
+                    if (isAdmin) {
+                        document.getElementById('goToAdmin').style.display = 'inline-block';
+                    }
+                } else {
+                    status.innerHTML = '<span class="error">❌ Invalid token</span>';
+                }
+            } catch (err) {
+                status.innerHTML = `<span class="error">❌ Error: ${err.message}</span>`;
+            }
+        }
+        
+        function goToAdmin() {
+            window.location.href = '/admin-ultimate.html';
+        }
+        
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/';
+        }
+        
+        checkStatus();
+    </script>
+</body>
+</html>
