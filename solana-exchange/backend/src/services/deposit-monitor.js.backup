@@ -1,0 +1,242 @@
+const { Connection, PublicKey } = require('@solana/web3.js');
+const { getHDWallet, USDC_MINT } = require('../lib/hdwallet');
+const db = require('../lib/database');
+
+const User = db.User;
+const Deposit = db.Deposit;
+const Transaction = db.Transaction;
+
+class DepositMonitor {
+    constructor() {
+        // Use public RPC with retry logic
+        this.connection = new Connection(process.env.SOLANA_RPC || 'https://api.devnet.solana.com', {
+            commitment: 'confirmed',
+            confirmTransactionInitialTimeout: 60000
+        });
+        this.hdWallet = getHDWallet();
+        this.processedSignatures = new Set();
+        this.isRunning = false;
+        this.userIndex = 0;
+        this.consecutiveErrors = 0;
+        this.maxConsecutiveErrors = 5;
+    }
+    
+    start() {
+        if (this.isRunning) return;
+        this.isRunning = true;
+        
+        console.log('🚀 Deposit monitor started (watching NEW HD wallets)');
+        this.checkNextUser();
+    }
+    
+    async checkNextUser() {
+        if (!this.isRunning) return;
+        
+        try {
+            const users = await User.getAll();
+            
+            if (users.length === 0) {
+                setTimeout(() => this.checkNextUser(), 30000);
+                return;
+            }
+            
+            // Check one user at a time
+            const user = users[this.userIndex % users.length];
+            await this.checkUserDeposits(user);
+            
+            this.userIndex++;
+            this.consecutiveErrors = 0;
+            
+            setTimeout(() => this.checkNextUser(), 5000);
+            
+        } catch (error) {
+            console.log(`Monitor error: ${error.message}`);
+            this.consecutiveErrors++;
+            
+            let delay = 5000 * Math.min(this.consecutiveErrors, 5);
+            
+            if (this.consecutiveErrors < this.maxConsecutiveErrors) {
+                setTimeout(() => this.checkNextUser(), delay);
+            } else {
+                console.log('Too many errors, waiting 60 seconds...');
+                this.consecutiveErrors = 0;
+                setTimeout(() => this.checkNextUser(), 60000);
+            }
+        }
+    }
+    
+    async checkUserDeposits(user) {
+        try {
+            // Get the user's current deposit address from HD wallet
+            // This ensures we're checking the CORRECT address from the new wallet
+            const userWallet = this.hdWallet.deriveUserAddress(user.wallet_index);
+            const currentDepositAddress = userWallet.publicKey;
+            
+            // Also check if the database has a different address (for backward compatibility)
+            const dbAddress = user.deposit_address;
+            
+            console.log(`🔍 Checking deposits for user ${user.id} (index ${user.wallet_index})`);
+            console.log(`   HD Address: ${currentDepositAddress}`);
+            
+            if (dbAddress !== currentDepositAddress) {
+                console.log(`   ⚠️ Database address mismatch! Updating...`);
+                // Update database with correct address
+                await this.updateUserAddress(user.id, currentDepositAddress);
+            }
+            
+            // Check the HD wallet address for deposits
+            await this.checkAddress(currentDepositAddress, user);
+            
+            // Also check the old address for any missed deposits (optional)
+            if (dbAddress && dbAddress !== currentDepositAddress) {
+                await this.checkAddress(dbAddress, user, true);
+            }
+            
+        } catch (error) {
+            console.log(`Error checking user ${user.id}: ${error.message}`);
+        }
+    }
+    
+    async checkAddress(address, user, isOldAddress = false) {
+        try {
+            const pubkey = new PublicKey(address);
+            
+            const signatures = await this.connection.getSignaturesForAddress(
+                pubkey, 
+                { limit: 5 }
+            );
+            
+            for (const sig of signatures) {
+                if (this.processedSignatures.has(sig.signature)) continue;
+                
+                await new Promise(r => setTimeout(r, 1000));
+                
+                const tx = await this.connection.getParsedTransaction(sig.signature, {
+                    maxSupportedTransactionVersion: 0
+                });
+                
+                if (!tx) continue;
+                
+                const found = await this.processSOLDeposit(user, tx, sig.signature, address, isOldAddress);
+                const foundUSDC = await this.processUSDCDeposit(user, tx, sig.signature, address, isOldAddress);
+                
+                if (found || foundUSDC) {
+                    this.processedSignatures.add(sig.signature);
+                }
+            }
+        } catch (error) {
+            if (!error.message.includes('429')) {
+                console.log(`Error checking address ${address}: ${error.message}`);
+            }
+        }
+    }
+    
+    async updateUserAddress(userId, newAddress) {
+        const sqlite3 = require('sqlite3').verbose();
+        const path = require('path');
+        const db = new sqlite3.Database(path.join(__dirname, '../../database.sqlite'));
+        
+        return new Promise((resolve, reject) => {
+            db.run(
+                'UPDATE users SET deposit_address = ? WHERE id = ?',
+                [newAddress, userId],
+                (err) => {
+                    db.close();
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+    }
+    
+    async processSOLDeposit(user, tx, signature, expectedAddress, isOldAddress = false) {
+        if (!tx.meta || !tx.transaction.message.instructions) return false;
+        
+        for (const ix of tx.transaction.message.instructions) {
+            if (ix.program === 'system' && ix.parsed?.type === 'transfer') {
+                const { destination, lamports, source } = ix.parsed.info;
+                
+                if (destination === expectedAddress) {
+                    const amount = lamports / 1e9;
+                    
+                    const existing = await Deposit.findBySignature(signature);
+                    if (!existing) {
+                        console.log(`💰 New SOL deposit: ${amount} SOL for user ${user.id}`);
+                        if (isOldAddress) {
+                            console.log(`   ⚠️  Deposit to OLD address! Consider notifying user.`);
+                        }
+                        
+                        await Deposit.create(user.id, 'SOL', amount, signature, source, destination);
+                        await User.updateBalance(user.id, 'SOL', amount);
+                        await Transaction.create(
+                            user.id, 
+                            'deposit', 
+                            'SOL', 
+                            amount, 
+                            0, 
+                            signature, 
+                            destination, 
+                            source
+                        );
+                        
+                        console.log(`✅ Balance updated: +${amount} SOL`);
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+    
+    async processUSDCDeposit(user, tx, signature, expectedAddress, isOldAddress = false) {
+        if (!tx.meta?.postTokenBalances) return false;
+        
+        const userATA = await this.hdWallet.getUserUSDCAddress(expectedAddress);
+        const userATAString = userATA.toBase58();
+        
+        for (const balance of tx.meta.postTokenBalances) {
+            if (balance.mint === USDC_MINT.toBase58()) {
+                const accountPubkey = tx.transaction.message.accountKeys[balance.accountIndex].pubkey.toBase58();
+                
+                if (accountPubkey === userATAString) {
+                    const preBalance = tx.meta.preTokenBalances?.find(
+                        b => b.accountIndex === balance.accountIndex
+                    );
+                    
+                    const preAmount = preBalance ? parseInt(preBalance.uiTokenAmount.amount) : 0;
+                    const postAmount = parseInt(balance.uiTokenAmount.amount);
+                    
+                    if (postAmount > preAmount) {
+                        const amount = (postAmount - preAmount) / Math.pow(10, balance.uiTokenAmount.decimals);
+                        
+                        const existing = await Deposit.findBySignature(signature);
+                        if (!existing) {
+                            console.log(`💰 New USDC deposit: ${amount} USDC for user ${user.id}`);
+                            if (isOldAddress) {
+                                console.log(`   ⚠️  Deposit to OLD address! Consider notifying user.`);
+                            }
+                            
+                            await Deposit.create(user.id, 'USDC', amount, signature, 'unknown', accountPubkey);
+                            await User.updateBalance(user.id, 'USDC', amount);
+                            await Transaction.create(
+                                user.id, 
+                                'deposit', 
+                                'USDC', 
+                                amount, 
+                                0, 
+                                signature, 
+                                accountPubkey, 
+                                'unknown'
+                            );
+                            
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+}
+
+module.exports = new DepositMonitor();

@@ -1,0 +1,20 @@
+========================================================================
+                    MASTER WALLET BACKUP
+========================================================================
+Generated: Sun Mar  8 21:33:04 UTC 2026
+
+MASTER ADDRESS: EWL1scjJYkEfC2M9gTs5gCqS53uhCXz33TNFrT6sjZ1U
+
+MASTER MNEMONIC:
+----------------
+chief chaos teach seek firm exist suggest release observe parrot setup cool rate gas bamboo weird ridge bread grape hundred summer sweet act evoke
+----------------
+
+VERIFICATION: ✅ AUTO-VERIFIED
+
+FILES:
+- keys/master-wallet.json (private key)
+- keys/master-mnemonic.txt (mnemonic)
+
+⚠️  STORE THIS FILE OFFLINE! PRINT IT! KEEP IT SAFE!
+========================================================================

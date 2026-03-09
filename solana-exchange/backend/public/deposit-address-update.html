@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Deposit Address Update</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            max-width: 600px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+        }
+        h1 { color: #333; margin-bottom: 20px; }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        code {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            display: block;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🔐 Deposit Address Update</h1>
+        
+        <div class="success">
+            <strong>✅ Platform Upgrade Complete</strong>
+            <p>We have upgraded our wallet system to improve security and reliability.</p>
+        </div>
+        
+        <p>Your new deposit address is:</p>
+        <code id="newAddress">Loading...</code>
+        
+        <div class="warning">
+            <strong>⚠️ IMPORTANT:</strong>
+            <p>Please update your records with this new address. The old address will stop working for new deposits.</p>
+        </div>
+        
+        <a href="/" class="btn">Go to Dashboard</a>
+    </div>
+
+    <script>
+        // Fetch user data
+        fetch('/api/auth/verify', {
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.user) {
+                document.getElementById('newAddress').textContent = data.user.deposit_address;
+            }
+        });
+    </script>
+</body>
+</html>

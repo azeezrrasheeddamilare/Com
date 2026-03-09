@@ -320,6 +320,23 @@
             margin-bottom: 20px;
         }
 
+        .modal-content input, .modal-content select {
+            width: 100%;
+            padding: 12px;
+            background: #2A2C33;
+            border: 1px solid #40444F;
+            border-radius: 8px;
+            color: white;
+            margin: 10px 0;
+            font-size: 16px;
+        }
+
+        .modal-content label {
+            color: #8E8E93;
+            display: block;
+            margin-top: 10px;
+        }
+
         .modal-actions {
             display: flex;
             gap: 10px;
@@ -408,6 +425,33 @@
         </div>
     </div>
 
+    <!-- Withdraw Modal -->
+    <div class="modal" id="withdrawModal">
+        <div class="modal-content">
+            <h3>💸 Withdraw from Master Wallet</h3>
+            <div class="warning-box">
+                ⚠️ This will send REAL funds to external wallet!
+            </div>
+            
+            <label>Asset</label>
+            <select id="withdrawAsset">
+                <option value="SOL">SOL</option>
+                <option value="USDC">USDC</option>
+            </select>
+            
+            <label>Amount</label>
+            <input type="number" id="withdrawAmount" step="0.001" min="0.001" placeholder="0.00">
+            
+            <label>Destination Address</label>
+            <input type="text" id="withdrawAddress" placeholder="Enter Solana address">
+            
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="closeWithdrawModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmWithdraw()">Withdraw</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Sweep Modal -->
     <div class="modal" id="sweepModal">
         <div class="modal-content">
@@ -460,7 +504,7 @@
         });
 
         // ============================================
-        // LOAD DATA - Using the CORRECT endpoint
+        // LOAD DATA
         // ============================================
         async function loadWalletData() {
             const content = document.getElementById('content');
@@ -473,14 +517,11 @@
                     }
                 });
                 
-                console.log('Response status:', response.status);
-                
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
                 const data = await response.json();
-                console.log('Wallet data received:', data);
                 
                 if (data.success) {
                     walletData = data.data;
@@ -502,12 +543,6 @@
         function renderWalletData() {
             const content = document.getElementById('content');
             
-            // Format SOL balances
-            const masterSol = walletData.masterWallet.solBalance.toFixed(4);
-            const masterUsdc = walletData.masterWallet.usdcBalance.toFixed(2);
-            const userSol = walletData.totals.userSOL.toFixed(4);
-            const totalSol = walletData.totals.totalSOL.toFixed(4);
-            
             content.innerHTML = `
                 <!-- Master Wallet Card -->
                 <div class="wallet-card">
@@ -517,19 +552,20 @@
                     <div class="balance-grid">
                         <div class="balance-item">
                             <div class="balance-label">SOL Balance</div>
-                            <div class="balance-value sol">${masterSol} SOL</div>
-                            <div class="balance-sub">≈ $${(walletData.masterWallet.solBalance * 100).toFixed(2)}</div>
+                            <div class="balance-value sol">${walletData.masterWallet.solBalance.toFixed(4)} SOL</div>
+                            <div class="balance-sub">Sweepable: ${walletData.masterWallet.sweepableSOL?.toFixed(4) || '0'} SOL</div>
                         </div>
                         <div class="balance-item">
                             <div class="balance-label">USDC Balance</div>
-                            <div class="balance-value usdc">$${masterUsdc} USDC</div>
+                            <div class="balance-value usdc">$${walletData.masterWallet.usdcBalance.toFixed(2)} USDC</div>
                         </div>
                     </div>
                     
                     <div class="button-group">
                         <button class="btn btn-primary" onclick="loadWalletData()">🔄 Refresh</button>
                         <button class="btn btn-warning" onclick="showBackupModal()">🔑 Backup Private Key</button>
-                        <button class="btn btn-danger" onclick="sweepAll()">💰 Sweep All to Master</button>
+                        <button class="btn btn-success" onclick="sweepAll()">💰 Sweep All to Master</button>
+                        <button class="btn btn-danger" onclick="showWithdrawModal()">💸 Withdraw from Master</button>
                     </div>
                 </div>
 
@@ -545,7 +581,7 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-label">User SOL</div>
-                        <div class="stat-value">${userSol}</div>
+                        <div class="stat-value">${walletData.totals.userSOL.toFixed(4)}</div>
                         <div class="stat-sub">Not swept</div>
                     </div>
                     <div class="stat-card">
@@ -566,7 +602,8 @@
                                     <th>Index</th>
                                     <th>Address</th>
                                     <th>SOL Balance</th>
-                                    <th>USDC Balance</th>
+                                    <th>Sweepable</th>
+                                    <th>USDC</th>
                                     <th>Status</th>
                                     <th>Actions</th>
                                 </tr>
@@ -578,6 +615,7 @@
                                         <td>${w.walletIndex}</td>
                                         <td><code>${w.depositAddress.substring(0, 10)}...</code></td>
                                         <td>${w.solBalance.toFixed(4)} SOL</td>
+                                        <td>${w.sweepableSOL?.toFixed(4) || '0'} SOL</td>
                                         <td>$${w.usdcBalance.toFixed(2)}</td>
                                         <td>
                                             ${w.hasSOL ? '<span class="badge badge-sol">SOL</span>' : ''}
@@ -585,7 +623,7 @@
                                             ${!w.hasSOL && !w.hasUSDC ? '<span class="badge badge-warning">Empty</span>' : ''}
                                         </td>
                                         <td>
-                                            ${w.hasSOL ? `<button class="btn btn-warning btn-sm" onclick="sweepUser('${w.userId}', '${w.username}', 'SOL', ${w.solBalance})">Sweep SOL</button>` : ''}
+                                            ${w.hasSOL ? `<button class="btn btn-warning btn-sm" onclick="sweepUser('${w.userId}', '${w.username}', 'SOL', ${w.sweepableSOL})">Sweep SOL</button>` : ''}
                                             ${w.hasUSDC ? `<button class="btn btn-warning btn-sm" onclick="sweepUser('${w.userId}', '${w.username}', 'USDC', ${w.usdcBalance})">Sweep USDC</button>` : ''}
                                         </td>
                                     </tr>
@@ -595,6 +633,60 @@
                     </div>
                 </div>
             `;
+        }
+
+        // ============================================
+        // WITHDRAW FUNCTIONS
+        // ============================================
+        function showWithdrawModal() {
+            document.getElementById('withdrawModal').classList.add('active');
+        }
+
+        function closeWithdrawModal() {
+            document.getElementById('withdrawModal').classList.remove('active');
+            document.getElementById('withdrawAmount').value = '';
+            document.getElementById('withdrawAddress').value = '';
+        }
+
+        async function confirmWithdraw() {
+            const asset = document.getElementById('withdrawAsset').value;
+            const amount = parseFloat(document.getElementById('withdrawAmount').value);
+            const address = document.getElementById('withdrawAddress').value;
+            
+            if (!amount || amount <= 0) {
+                alert('Please enter a valid amount');
+                return;
+            }
+            
+            if (!address) {
+                alert('Please enter a destination address');
+                return;
+            }
+            
+            if (!confirm(`Withdraw ${amount} ${asset} to ${address}?`)) return;
+            
+            try {
+                const response = await fetch('/api/wallet-manager/withdraw', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({ asset, amount, toAddress: address })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`✅ ${data.message}\n\nTransaction: ${data.signature}\n\nView: ${data.explorerUrl}`);
+                    closeWithdrawModal();
+                    await loadWalletData();
+                } else {
+                    alert(`❌ Error: ${data.error}`);
+                }
+            } catch (error) {
+                alert('Withdrawal failed');
+            }
         }
 
         // ============================================

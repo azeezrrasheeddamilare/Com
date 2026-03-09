@@ -1,0 +1,37 @@
+========================================================================
+                    MASTER WALLET INFORMATION
+========================================================================
+Generated: Sun Mar  8 20:47:30 UTC 2026
+
+MASTER ADDRESS: GXdkmkT9zW9qcvHLnPMSz378QdhJXUL6AJHmdTB5HpNe
+
+MASTER MNEMONIC:
+----------------
+general hen wink slide rebel meadow diagram acoustic ability code glad area
+----------------
+
+⚠️  CRITICAL WARNING ⚠️
+======================
+This mnemonic is the ONLY way to recover your wallet.
+If you lose it, you lose ALL funds forever!
+
+Store this information:
+1. Write the mnemonic on paper and keep in a safe place
+2. NEVER store it digitally (no screenshots, no text files)
+
+HD DERIVATION PATHS:
+- Master wallet (index 0): m/44'/501'/0'/0'
+- User 1 (index 1): m/44'/501'/1'/0'
+- User 2 (index 2): m/44'/501'/2'/0'
+- User 3 (index 3): m/44'/501'/3'/0'
+- ... and so on
+
+FILES:
+- keys/master-wallet.json: Private key (backup)
+- .env: Contains the mnemonic for the platform
+
+NEXT STEPS:
+1. Fund the wallet: https://solfaucet.com
+2. Restart server: ./start.sh
+3. Test withdrawal: http://localhost:3000/master-wallet.html
+========================================================================
